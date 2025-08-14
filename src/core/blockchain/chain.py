@@ -1,58 +1,102 @@
-# src/core/blockchain/chain.py
-import json
-from typing import Any, Dict, List
+from typing import List, Optional, Dict, Any
+from sqlalchemy.orm import Session
+from src.core.crypto.aes_handler import AESHandler
 from .block import Block
-from pathlib import Path
+from src.core.database.session import db_manager
+import logging
+
+logger = logging.getLogger(__name__)
 
 class Blockchain:
-    def __init__(self, crypto):
-        self.chain: List[Block] = []
+    def __init__(self, crypto: AESHandler):
         self.crypto = crypto
+        self.deleted_blocks = set()
         self._initialize_chain()
 
     def _initialize_chain(self):
-        if not self.chain:
-            genesis_data = {"note": "Genesis Block"}
-            genesis_block = Block(0, genesis_data, "0", self.crypto)
-            self.chain.append(genesis_block)
-
-    def add_block(self, note_data: Dict[str, Any]):
-        new_block = Block(
-            index=len(self.chain),
-            data=note_data,
-            previous_hash=self.chain[-1].hash,
-            crypto=self.crypto
-        )
-        self.chain.append(new_block)
-
-    def save_to_file(self, file_path: str):
-        chain_data = [{
-            "index": block.index,
-            "timestamp": block.timestamp,
-            "data": block.encrypted_data,
-            "previous_hash": block.previous_hash,
-            "hash": block.hash
-        } for block in self.chain]
-
-        Path(file_path).parent.mkdir(exist_ok=True, parents=True)
-        with open(file_path, 'w') as f:
-            json.dump(chain_data, f, indent=2)
-
-    def load_from_file(self, file_path: str):
+        """Initialize blockchain with genesis block if needed"""
+        session = db_manager.get_session()
         try:
-            with open(file_path, 'r') as f:
-                chain_data = json.load(f)
-                self.chain = []
-                for block_data in chain_data:
-                    block = Block(
-                        index=block_data['index'],
-                        data={},  # داده واقعی در decrypt پر می‌شود
-                        previous_hash=block_data['previous_hash'],
-                        crypto=self.crypto
-                    )
-                    block.timestamp = block_data['timestamp']
-                    block.encrypted_data = block_data['data']
-                    block.hash = block_data['hash']
-                    self.chain.append(block)
-        except (FileNotFoundError, json.JSONDecodeError):
-            self._initialize_chain()
+            if not self.get_latest_block(session):
+                genesis_data = {"note": "Genesis Block"}
+                genesis_block = Block(
+                    index=0,
+                    data=genesis_data,
+                    previous_hash="0",
+                    crypto=self.crypto
+                )
+                session.add(genesis_block)
+                session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Chain initialization failed: {e}")
+        finally:
+            session.close()
+
+    def add_block(self, data: Dict[str, Any]) -> bool:
+        """Add new block to blockchain"""
+        session = db_manager.get_session()
+        try:
+            last_block = self.get_latest_block(session)
+            if not last_block:
+                logger.error("No last block found")
+                return False
+                
+            new_block = Block(
+                index=last_block.index + 1,
+                data=data,
+                previous_hash=last_block.current_hash,
+                crypto=self.crypto
+            )
+            
+            session.add(new_block)
+            session.commit()
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Error adding block: {e}")
+            return False
+        finally:
+            session.close()
+
+    def get_latest_block(self, session: Session) -> Optional[Block]:
+        """Get latest block from blockchain"""
+        return session.query(Block).order_by(Block.index.desc()).first()
+
+    def mark_as_deleted(self, index: int) -> bool:
+        """Mark block as deleted (soft delete)"""
+        if index <= 0:
+            return False
+            
+        self.deleted_blocks.add(index)
+        return True
+
+    def is_chain_valid(self, session: Session) -> bool:
+        """Validate blockchain integrity"""
+        blocks = self.get_all_blocks(session)
+        
+        for i in range(1, len(blocks)):
+            current = blocks[i]
+            previous = blocks[i-1]
+            
+            # Skip deleted blocks in validation
+            if current.index in self.deleted_blocks:
+                continue
+                
+            # Validate current hash
+            if current.current_hash != current.calculate_hash():
+                return False
+                
+            # Validate link to previous block
+            if current.previous_hash != previous.current_hash:
+                return False
+                
+        return True
+
+    def get_all_blocks(self, session: Session) -> List[Block]:
+        """Get all blocks from blockchain"""
+        return session.query(Block).order_by(Block.index).all()
+
+    def get_chain_length(self, session: Session) -> int:
+        """Get blockchain length"""
+        return session.query(Block).count()
