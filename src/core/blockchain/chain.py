@@ -1,6 +1,6 @@
 # src/core/blockchain/chain.py
 import json
-from typing import List
+from typing import Any, Dict, List
 from .block import Block
 from pathlib import Path
 
