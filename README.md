@@ -1,1 +1,1 @@
-# cryptodiary
+# crypto-note
