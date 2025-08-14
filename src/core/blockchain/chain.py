@@ -2,20 +2,20 @@ from typing import List, Optional, Dict, Any
 from sqlalchemy.orm import Session
 from src.core.crypto.aes_handler import AESHandler
 from .block import Block
-from src.core.database.session import db_manager
 import logging
 
 logger = logging.getLogger(__name__)
 
 class Blockchain:
-    def __init__(self, crypto: AESHandler):
+    def __init__(self, crypto: AESHandler, db_manager):
         self.crypto = crypto
         self.deleted_blocks = set()
+        self.db_manager = db_manager
         self._initialize_chain()
 
     def _initialize_chain(self):
         """Initialize blockchain with genesis block if needed"""
-        session = db_manager.get_session()
+        session = self.db_manager.get_session()
         try:
             if not self.get_latest_block(session):
                 genesis_data = {"note": "Genesis Block"}
@@ -35,7 +35,7 @@ class Blockchain:
 
     def add_block(self, data: Dict[str, Any]) -> bool:
         """Add new block to blockchain"""
-        session = db_manager.get_session()
+        session = self.db_manager.get_session()
         try:
             last_block = self.get_latest_block(session)
             if not last_block:
@@ -63,6 +63,26 @@ class Blockchain:
         """Get latest block from blockchain"""
         return session.query(Block).order_by(Block.index.desc()).first()
 
+    def get_block_by_index(self, index: int, session: Session = None) -> Optional[Block]:
+        """Get block by index with optional session management"""
+        should_close = False
+        if session is None:
+            session = self.db_manager.get_session()
+            should_close = True
+        
+        try:
+            block = session.query(Block).filter(Block.index == index).first()
+            if not block and index == 0:
+                # Handle genesis block case if needed
+                return self._initialize_chain()
+            return block
+        except Exception as e:
+            logger.error(f"Error getting block {index}: {e}")
+            return None
+        finally:
+            if should_close:
+                session.close()
+
     def mark_as_deleted(self, index: int) -> bool:
         """Mark block as deleted (soft delete)"""
         if index <= 0:
@@ -71,32 +91,49 @@ class Blockchain:
         self.deleted_blocks.add(index)
         return True
 
-    def is_chain_valid(self, session: Session) -> bool:
+    def is_chain_valid(self, session: Session = None) -> bool:
         """Validate blockchain integrity"""
-        blocks = self.get_all_blocks(session)
+        should_close = False
+        if session is None:
+            session = self.db_manager.get_session()
+            should_close = True
         
-        for i in range(1, len(blocks)):
-            current = blocks[i]
-            previous = blocks[i-1]
+        try:
+            blocks = session.query(Block).order_by(Block.index).all()
             
-            # Skip deleted blocks in validation
-            if current.index in self.deleted_blocks:
-                continue
+            for i in range(1, len(blocks)):
+                current = blocks[i]
+                previous = blocks[i-1]
                 
-            # Validate current hash
-            if current.current_hash != current.calculate_hash():
-                return False
-                
-            # Validate link to previous block
-            if current.previous_hash != previous.current_hash:
-                return False
-                
-        return True
+                if current.index in self.deleted_blocks:
+                    continue
+                    
+                # Get decrypted data for validation
+                current_data = current.get_decrypted_data(self.crypto)
+                if current.current_hash != current.calculate_hash(current_data):
+                    return False
+                    
+                if current.previous_hash != previous.current_hash:
+                    return False
+                    
+            return True
+        finally:
+            if should_close:
+                session.close()
 
     def get_all_blocks(self, session: Session) -> List[Block]:
         """Get all blocks from blockchain"""
         return session.query(Block).order_by(Block.index).all()
 
-    def get_chain_length(self, session: Session) -> int:
-        """Get blockchain length"""
-        return session.query(Block).count()
+    def get_chain_length(self, session: Session = None) -> int:
+        """Get blockchain length with optional session parameter"""
+        should_close = False
+        if session is None:
+            session = self.db_manager.get_session()
+            should_close = True
+        
+        try:
+            return session.query(Block).count()
+        finally:
+            if should_close:
+                session.close()

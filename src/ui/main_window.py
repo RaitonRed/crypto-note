@@ -33,25 +33,32 @@ class MainWindow(QMainWindow):
             QLineEdit.Password
         )
         
-        if ok and password:
-            try:
-                self.initialize_services(password)
-                self.update_ui_signal.emit()
-            except Exception as e:
-                logger.error(f"Authentication failed: {e}")
-                QMessageBox.warning(self, "Authentication Failed", str(e))
-                self.show_auth_dialog()
+        if ok:
+            if password:  # بررسی وجود رمز عبور
+                try:
+                    self.initialize_services(password)
+                    self.update_ui_signal.emit()
+                except Exception as e:
+                    QMessageBox.warning(self, "Error", str(e))
+                    self.show_auth_dialog()
+            else:
+                QMessageBox.warning(self, "Error", "Password cannot be empty!")
         else:
             self.close()
 
-    def initialize_services(self, password):
+    def initialize_services(self, password: str):
         """Initialize services with password"""
-        self.current_password = password
-        self.diary_service = DiaryService(password)
-        
-        # Verify password by trying to decrypt the genesis block
-        if not self.diary_service.verify_password():
-            raise ValueError("Invalid password or corrupted data")
+        try:
+            self.current_password = password
+            self.diary_service = DiaryService(password)
+            
+            # تأیید رمز عبور
+            if not self.diary_service.verify_password():
+                raise ValueError("Invalid password or corrupted data")
+                
+        except Exception as e:
+            QMessageBox.critical(self, "Initialization Error", str(e))
+            raise
 
     def init_ui(self):
         """Initialize all UI components"""
@@ -245,7 +252,9 @@ class MainWindow(QMainWindow):
         for note in notes:
             self.notes_list.addItem(f"{note['date']} - {note['content'][:50]}...")
         
-        self.stats_label.setText(f"{len(notes)} notes | Chain length: {self.diary_service.get_chain_length()}")
+        # Get chain length (will handle session internally)
+        chain_length = self.diary_service.blockchain.get_chain_length()
+        self.stats_label.setText(f"{len(notes)} notes | Chain length: {chain_length}")
 
     def filter_notes(self):
         """Filter notes based on search text"""

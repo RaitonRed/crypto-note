@@ -12,15 +12,11 @@ from src.core.crypto.aes_handler import AESHandler
 
 def init_db():
     try:
-        # پاکسازی دیتابیس (فقط برای توسعه)
         db_manager.Base.metadata.drop_all(db_manager.engine)
-        
-        # ایجاد جداول جدید
         db_manager.Base.metadata.create_all(db_manager.engine)
         
-        # ایجاد بلاک جنسیس
-        crypto = AESHandler(b'\x00'*32)  # کلید موقت
-        blockchain = Blockchain(crypto)
+        crypto = AESHandler(b'\x00'*32)
+        blockchain = Blockchain(crypto, db_manager)  # Pass db_manager
         print("✅ Database initialized successfully!")
     except Exception as e:
         print(f"❌ Error initializing database: {e}")

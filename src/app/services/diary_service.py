@@ -12,14 +12,20 @@ logger = logging.getLogger(__name__)
 
 class DiaryService:
     def __init__(self, password: str):
-        self.password = password
-        self.crypto = self._init_crypto()
-        self.blockchain = Blockchain(self.crypto)
+        # Use a fixed salt for testing (in production, store this securely)
+        self.salt = b'\x00'*16  # 16-byte salt
+        self.key = derive_key(password, self.salt)
+        self.crypto_handler = AESHandler(self.key)
+        self.blockchain = Blockchain(self.crypto_handler, db_manager)
+        
+        if not self._verify_password():
+            raise ValueError("Invalid password or corrupted data")
 
     def _init_crypto(self):
         """Initialize crypto with proper key derivation"""
         salt_path = "data/keystore/salt.bin"
         
+        # خواندن یا ایجاد salt
         if os.path.exists(salt_path):
             with open(salt_path, 'rb') as f:
                 salt = f.read()
@@ -29,7 +35,8 @@ class DiaryService:
             with open(salt_path, 'wb') as f:
                 f.write(salt)
         
-        key, _ = derive_key(self.password, salt)
+        # تولید کلید
+        key = derive_key(self.password, salt)
         return AESHandler(key)
 
     def verify_password(self) -> bool:
@@ -107,19 +114,47 @@ class DiaryService:
         finally:
             session.close()
 
-    def get_note_by_index(self, index: int) -> Optional[Dict]:
-        """Get specific note by index"""
-        session = db_manager.get_session()
+    def get_note_by_index(self, index: int) -> Optional[dict]:
+        """Get decrypted note by index"""
         try:
-            block = self.blockchain.get_block_by_index(index, session)
-            if block and block.index != 0:  # Skip genesis
-                return block.get_decrypted_data(self.blockchain.crypto)
+            block = self.blockchain.get_block_by_index(index)
+            if block:
+                decrypted_data = block.get_decrypted_data(self.crypto_handler)
+                return {
+                    'content': decrypted_data.get('content', ''),
+                    'date': str(block.timestamp),
+                    'index': block.index
+                }
             return None
-        finally:
-            session.close()
+        except Exception as e:
+            logger.error(f"Error getting note {index}: {e}")
+            return None
 
     def cleanup(self):
         """Securely clear sensitive data"""
         self.password = None
         self.crypto.key = None
         del self.crypto
+
+    def get_chain_length(self) -> int:
+        """Get the length of the blockchain"""
+        return self.blockchain.get_chain_length()
+
+    def is_chain_valid(self) -> bool:
+        """Verify the integrity of the blockchain"""
+        session = self.blockchain.db_manager.get_session()
+        try:
+            return self.blockchain.is_chain_valid(session)
+        finally:
+            session.close()
+
+    def _verify_password(self) -> bool:
+        """Verify the password can decrypt the genesis block"""
+        try:
+            genesis = self.blockchain.get_block_by_index(0)
+            if genesis:
+                genesis.get_decrypted_data(self.crypto_handler)
+                return True
+            return False
+        except:
+            return False
