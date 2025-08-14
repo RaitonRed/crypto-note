@@ -3,9 +3,11 @@ charset-normalizer==3.4.3
 crypto==1.4.1
 idna==3.10
 Naked==0.1.32
+pycryptodome==3.18.0
 PyQt5==5.15.11
 PyQt5-Qt5==5.15.17
 PyQt5_sip==12.17.0
+python-dotenv==1.0.0
 PyYAML==6.0.2
 requests==2.32.4
 shellescape==3.8.1
