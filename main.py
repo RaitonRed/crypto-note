@@ -1,6 +1,6 @@
 import sys
 from PyQt5.QtWidgets import QApplication, QMessageBox
-from src.ui.main_window import MainWindow
+from src.app.ui.main_window import MainWindow
 import logging
 from logging.handlers import RotatingFileHandler
 
